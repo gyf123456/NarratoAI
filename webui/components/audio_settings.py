@@ -42,6 +42,7 @@ BGM_TRACKS_JSON = os.path.join(BGM_RESOURCE_DIR, "tracks.json")
 BGM_UPLOAD_SUBDIR = "uploaded_bgms"
 BGM_AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg")
 LOCAL_TTS_ENGINES = {
+    "pyvideotrans",
     config.INDEXTTS_ENGINE,
     config.INDEXTTS_MACOS_ENGINE,
     config.INDEXTTS2_ENGINE,
@@ -77,6 +78,7 @@ def get_soulvoice_voices():
 def get_tts_engine_options(tr=lambda key: key):
     """获取TTS引擎选项"""
     engine_options = {
+        "pyvideotrans": "pyvideotrans",
         config.INDEXTTS_ENGINE: config.INDEXTTS_DISPLAY_NAME,
         config.INDEXTTS_MACOS_ENGINE: config.INDEXTTS_MACOS_DISPLAY_NAME,
         config.INDEXTTS2_ENGINE: config.INDEXTTS2_DISPLAY_NAME,
@@ -610,7 +612,9 @@ def render_tts_settings(tr):
     # 3. 根据选择的引擎渲染对应的配置界面
     # st.subheader("引擎配置")
 
-    if selected_engine == "edge_tts":
+    if selected_engine == "pyvideotrans":
+        render_pyvideotrans_tts_settings(tr)
+    elif selected_engine == "edge_tts":
         render_edge_tts_settings(tr)
     elif selected_engine == "azure_speech":
         render_azure_speech_settings(tr)
@@ -637,6 +641,67 @@ def render_tts_settings(tr):
 
     # 4. 试听功能
     render_voice_preview_new(tr, selected_engine)
+
+
+def render_pyvideotrans_tts_settings(tr):
+    from app.services import pyvideotrans_tts
+
+    st.caption(tr("PyVideoTrans Host TTS Help"))
+    api_url = st.text_input(
+        tr("PyVideoTrans API URL"),
+        value=config.ui.get("pyvideotrans_api_url", "http://host.docker.internal:9011"),
+        key="pyvideotrans_api_url",
+    ).strip().rstrip("/")
+    provider_cache_key = f"pyvideotrans_providers:{api_url}"
+    if st.button(tr("Detect Host TTS Services"), key="pyvideotrans_detect"):
+        try:
+            st.session_state[provider_cache_key] = pyvideotrans_tts.list_providers(api_url)
+            st.success(tr("Host TTS service connected"))
+        except Exception as error:
+            st.error(f"{tr('Host TTS connection failed')}: {error}")
+    providers = st.session_state.get(provider_cache_key) or [
+        {"id": 1, "name": "Qwen3-TTS (Local)"}, {"id": 0, "name": "Edge TTS"},
+    ]
+    provider_names = {int(item["id"]): item["name"] for item in providers}
+    saved_type = int(config.ui.get("pyvideotrans_tts_type", 1))
+    provider_ids = list(provider_names)
+    tts_type = st.selectbox(
+        tr("Host TTS Provider"), provider_ids,
+        index=provider_ids.index(saved_type) if saved_type in provider_ids else 0,
+        format_func=lambda value: provider_names[value], key="pyvideotrans_provider",
+    )
+    language = st.text_input(tr("Host TTS Language"), value=config.ui.get("pyvideotrans_language", "zh-cn"))
+    voices_cache_key = f"pyvideotrans_voices:{api_url}:{tts_type}:{language}"
+    if st.button(tr("Load Host Voices"), key="pyvideotrans_load_voices"):
+        try:
+            st.session_state[voices_cache_key] = pyvideotrans_tts.list_voices(api_url, tts_type, language)
+        except Exception as error:
+            st.error(f"{tr('Host TTS connection failed')}: {error}")
+    voices = st.session_state.get(voices_cache_key) or []
+    voice_labels = {str(item["name"]): str(item.get("label") or item["name"])
+                    for item in voices if item.get("name") not in {"No", "clone"}}
+    if voice_labels:
+        voice_names = list(voice_labels)
+        saved_voice = config.ui.get("pyvideotrans_voice", "")
+        selected_voice = st.selectbox(tr("Host Voice"), list(voice_labels),
+                                     index=voice_names.index(saved_voice) if saved_voice in voice_names else 0,
+                                     format_func=lambda value: voice_labels[value],
+                                     key=f"pyvideotrans_voice:{api_url}:{tts_type}:{language}")
+    else:
+        selected_voice = st.text_input(tr("Host Voice"),
+                                      value=config.ui.get("pyvideotrans_voice", "Vivian"))
+    speed = st.slider(tr("Speech Rate"), min_value=0.5, max_value=2.0,
+                      value=max(0.5, min(2.0, float(config.ui.get("pyvideotrans_speed", 1.0)))), step=0.05)
+    config.ui.update({
+        "pyvideotrans_api_url": api_url, "pyvideotrans_tts_type": tts_type,
+        "pyvideotrans_language": language, "pyvideotrans_voice": selected_voice,
+        "pyvideotrans_speed": speed, "voice_name": f"pyvideotrans:{selected_voice}",
+    })
+    st.session_state['voice_rate'] = speed
+    st.session_state['voice_pitch'] = 1.0
+    if st.button(tr("Save Host TTS Settings"), key="pyvideotrans_save"):
+        config.save_config()
+        st.success(tr("Host TTS settings saved"))
 
 
 def render_edge_tts_settings(tr):
@@ -1981,6 +2046,10 @@ def render_voice_preview_new(tr, selected_engine):
             voice_name = f"qwen3:{vt}"
             voice_rate = config.ui.get("qwen3_rate", 1.0)
             voice_pitch = 1.0  # Qwen3 TTS 不支持音调调节
+        elif selected_engine == "pyvideotrans":
+            voice_name = f"pyvideotrans:{config.ui.get('pyvideotrans_voice', '')}"
+            voice_rate = config.ui.get("pyvideotrans_speed", 1.0)
+            voice_pitch = 1.0
         elif selected_engine == config.INDEXTTS_ENGINE:
             reference_audio = config.indextts.get("reference_audio", "")
             if reference_audio:
@@ -2032,6 +2101,7 @@ def render_voice_preview_new(tr, selected_engine):
         with st.spinner(tr("Synthesizing Voice")):
             temp_dir = utils.storage_dir("temp", create=True)
             audio_format = "audio/wav" if selected_engine in (
+                "pyvideotrans",
                 config.INDEXTTS_ENGINE,
                 config.INDEXTTS_MACOS_ENGINE,
                 config.INDEXTTS2_ENGINE,
@@ -2042,14 +2112,19 @@ def render_voice_preview_new(tr, selected_engine):
             audio_extension = ".wav" if audio_format == "audio/wav" else ".mp3"
             audio_file = os.path.join(temp_dir, f"tmp-voice-{str(uuid4())}{audio_extension}")
 
-            sub_maker = voice.tts(
-                text=play_content,
-                voice_name=voice_name,
-                voice_rate=voice_rate,
-                voice_pitch=voice_pitch,
-                voice_file=audio_file,
-                tts_engine=st.session_state.get('tts_engine')
-            )
+            try:
+                sub_maker = voice.tts(
+                    text=play_content,
+                    voice_name=voice_name,
+                    voice_rate=voice_rate,
+                    voice_pitch=voice_pitch,
+                    voice_file=audio_file,
+                    tts_engine=st.session_state.get('tts_engine')
+                )
+            except Exception as error:
+                logger.exception("试听配音失败")
+                st.error(f"{tr('Voice synthesis failed')}: {error}")
+                return
 
             if sub_maker and os.path.exists(audio_file):
                 st.success(tr("Voice synthesis successful"))

@@ -296,6 +296,16 @@
     silence_duration = 0.125
 
 [ui]
+    # 复用宿主机 pyvideotrans Web API；启动命令见 README。
+    pyvideotrans_api_url = "http://host.docker.internal:9011"
+    pyvideotrans_tts_type = 1
+    pyvideotrans_language = "zh-cn"
+    pyvideotrans_voice = "Vivian"
+    pyvideotrans_speed = 1.0
+    # 本地运行时的视频来源目录。留空使用 resource/videos。
+    # Docker 通过 .env 中的 HOST_VIDEO_DIR 配置宿主机目录。
+    video_source_directory = ""
+
     # TTS引擎选择 (indextts, indextts2, omnivoice, edge_tts, qwen3_tts, tencent_tts, doubaotts, azure_speech)
     tts_engine = "indextts"
 

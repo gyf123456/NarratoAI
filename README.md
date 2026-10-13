@@ -156,12 +156,24 @@ _**1. NarratoAI 是一款完全免费的软件，近期在社交媒体(抖音,B�
 git clone https://github.com/linyqh/NarratoAI.git
 cd NarratoAI
 
-# 2. 一键部署
-docker compose up -d
+# 2. 创建配置文件（首次部署）
+cp config.example.toml config.toml
+cp .env.example .env
 
-# 3. 访问应用
+# 3. 编辑 .env，将 HOST_VIDEO_DIR 设置为宿主机已有视频目录的完整路径
+# 例如 HOST_VIDEO_DIR=/Users/guyanfeng/Movies
+
+# 4. 构建并启动
+docker compose up -d --build
+
+# 5. 访问应用
 # 浏览器打开 http://localhost:8501
 ```
+
+“视频来源”默认使用“从视频目录选择”，直接读取宿主机目录，支持多选、扫描子目录和大写扩展名，无需浏览器上传，也不受上传大小限制。默认目录为 `./resource/videos`。修改 `.env` 中的 `HOST_VIDEO_DIR` 后，执行 `docker compose up -d --force-recreate` 更新挂载；新增视频后刷新页面即可。
+
+目录必须已存在，并允许容器用户读取；部分处理流程会在素材旁生成音频、字幕或压缩视频，因此挂载保留写入权限。页面显示的 `/NarratoAI/host-videos` 是容器中的目录，对应 `.env` 配置的宿主机目录。本地运行可通过 `config.toml` 的 `[ui] video_source_directory` 配置目录。
+
 ### 方式三：本地运行
 ```bash
 # 1. 克隆项目
@@ -177,10 +189,35 @@ cp config.example.toml config.toml
 # 4. 编辑 config.toml，配置你的 API 密钥
 
 # 5. 启动应用
-uv run streamlit run webui.py --server.maxUploadSize=2048
+uv run streamlit run webui.py --server.maxUploadSize=10240
 
 # 6. 访问应用
 # 浏览器打开 http://localhost:8501
+```
+
+### 复用宿主机 pyvideotrans 配音
+
+宿主机安装并配置好 pyvideotrans 的配音引擎和音色后，在该项目目录启动 **Web API**（不是旧的 `api.py`）：
+
+```bash
+cd /Users/guyanfeng/code/github/pyvideotrans
+uv run --extra qwen-tts python web_api.py --host 0.0.0.0 --port 9011
+```
+
+在 NarratoAI 的“音频设置”中选择 `pyvideotrans [本地部署]`，Docker 服务地址填写 `http://host.docker.internal:9011`。点击“检测宿主机配音服务”，选择引擎，再点击“读取宿主机音色”，保存并试听。普通音色可用于试听和成片配音，API 会在宿主机合成并将 WAV 传回容器；无需额外挂载 pyvideotrans 的输出目录。此入口不支持逐片段参考音频克隆。首次使用本地模型前，应在 pyvideotrans 中完成模型下载并验证配音。
+
+## 剧情背景图解
+
+可选择 `2026-1013-visual-story.json` 体验地图、人物关系和联姻利益对照。图解按片段实际配音时长逐步展开，覆盖一小段解说画面后返回原片，原声片段不覆盖。图解在最终字幕合成前插入，不改变配音、总时长或字幕时间线。
+
+更自然的版本选择 `2026-1013-natural-visual-story.json`：开场不插图，等解说提到任命、联姻和交易时才出现简化图解。透明画面将信息放在竖屏上下空白区域，保留中央原片，并用半秒淡入淡出进入和退出。素材位于 `resource/visuals/got_s01e01_natural`。
+
+图解素材保存在 `resource/visuals/got_s01e01`，可通过 `scripts/build_story_visuals.py` 重新绘制；地图为方位示意，关系图仅使用本集已知关系。脚本的 `visual_overlays` 字段配置素材及片段内的显示比例，表格编辑器保留该字段但不显示技术配置。更新合成代码后需要重新构建 Docker；修改已挂载的图片或脚本无需重新构建。
+
+已有成功任务可以复用配音制作预览，不重新调用 TTS：
+
+```bash
+python3 scripts/render_story_visual_preview.py --task 任务编号
 ```
 
 ## 配置要求 📦

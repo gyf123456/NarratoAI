@@ -8,6 +8,13 @@ log() {
 
 # 函数：安装运行时依赖
 install_runtime_dependencies() {
+    # 当前 Docker 镜像在构建阶段已通过 uv.lock 安装依赖。
+    # 复用虚拟环境，避免首次启动时再次联网安装并覆盖锁定版本。
+    if [ -x /opt/venv/bin/python ]; then
+        log "使用镜像内预装的 Python 依赖，跳过运行时安装"
+        return
+    fi
+
     log "检查并安装运行时依赖..."
     
     # 检查是否需要安装新的依赖
@@ -105,7 +112,7 @@ start_webui() {
         --server.address=0.0.0.0 \
         --server.port=8501 \
         --server.enableCORS=true \
-        --server.maxUploadSize=2048 \
+        --server.maxUploadSize=10240 \
         --server.enableXsrfProtection=false \
         --browser.gatherUsageStats=false \
         --browser.serverAddress=0.0.0.0 \

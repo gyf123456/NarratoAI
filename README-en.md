@@ -101,7 +101,15 @@ Below is a screenshot of this person's x (Twitter) homepage
 - Windows 10/11 or MacOS 11.0 or above
 - [Python 3.12+](https://www.python.org/downloads/)
 
-## Local Run 🚀
+## Docker video directory 🚀
+
+For a first deployment, copy `config.example.toml` to `config.toml` and `.env.example` to `.env`. Set `HOST_VIDEO_DIR` in `.env` to an existing absolute directory on the Docker host, then run `docker compose up -d --build`.
+
+Video Source defaults to directory selection, with multiple selection and recursive discovery. Videos are read directly without browser uploads. The host directory is mounted at `/NarratoAI/host-videos`; the default is `./resource/videos`. After changing `HOST_VIDEO_DIR`, run `docker compose up -d --force-recreate`. Refresh the page to discover newly added files. The container user needs read access and, for workflows that produce audio, subtitle, or compressed files beside the source, write access. For local execution, set `[ui] video_source_directory` in `config.toml`.
+
+## Local execution
+
+To reuse pyvideotrans TTS on the host, run `uv run --extra qwen-tts python web_api.py --host 0.0.0.0 --port 9011` in that project. The optional extra is required for local Qwen3-TTS. In Audio Settings, select `pyvideotrans [Local Deployment]` and use `http://host.docker.internal:9011` in Docker. Detect providers, load voices, save settings, and preview speech. Both preview and video narration use the host TTS task API and download the resulting WAV. Models and voices must already work in pyvideotrans. Per-segment reference audio cloning is unsupported. The legacy `api.py` lacks the provider and audio download endpoints required by this integration.
 
 ```bash
 git clone https://github.com/linyqh/NarratoAI.git
@@ -109,7 +117,7 @@ cd NarratoAI
 
 uv sync
 cp config.example.toml config.toml
-uv run streamlit run webui.py --server.maxUploadSize=2048
+uv run streamlit run webui.py --server.maxUploadSize=10240
 ```
 
 ## Feedback & Suggestions 📢

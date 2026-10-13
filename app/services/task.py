@@ -20,6 +20,7 @@ from app.services import (
     generate_video,
     script_subtitle,
     sonilo,
+    story_visuals,
 )
 from app.services import state as sm
 from app.utils import utils
@@ -560,7 +561,11 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
     )
     logger.info(f"\n\n## 6. 最后一步: 合并字幕/BGM/配音/视频 -> {merge_output_video_path}")
 
-    # 可选功能，默认关闭：混入 Sonilo AI 音效（失败时沿用原视频）
+    # 插入脚本指定的背景图解，再混入可选音效。
+    combined_video_path = story_visuals.insert_story_visuals(
+        combined_video_path, new_script_list, config.root_dir,
+        path.join(utils.task_dir(task_id), "merger_with_visuals.mp4"),
+    )
     combined_video_path = _apply_sonilo_sfx(task_id, params, combined_video_path)
 
     # bgm_path = '/Users/apple/Desktop/home/NarratoAI/resource/songs/bgm.mp3'
@@ -890,7 +895,11 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         ffmpeg_progress=0,
     )
 
-    # 可选功能，默认关闭：混入 Sonilo AI 音效（失败时沿用原视频）
+    # 插入脚本指定的背景图解，再混入可选音效。
+    combined_video_path = story_visuals.insert_story_visuals(
+        combined_video_path, new_script_list, config.root_dir,
+        path.join(utils.task_dir(task_id), "merger_with_visuals.mp4"),
+    )
     combined_video_path = _apply_sonilo_sfx(task_id, params, combined_video_path)
 
     bgm_path = _resolve_bgm_path(task_id, params, combined_video_path)

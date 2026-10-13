@@ -13,10 +13,16 @@ services:
       - ./storage:/NarratoAI/storage
       - ./config.toml:/NarratoAI/config.toml
       - ./resource:/NarratoAI/resource:rw
+      - type: bind
+        source: ${HOST_VIDEO_DIR:-./resource/videos}
+        target: /NarratoAI/host-videos
+        bind:
+          create_host_path: false
 
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
+      - NARRATO_VIDEO_SOURCE_DIR=/NarratoAI/host-videos
 
     restart: unless-stopped
 

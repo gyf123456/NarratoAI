@@ -1275,6 +1275,23 @@ def tts(
     voice_name = config.normalize_indextts_voice_prefix(voice_name)
     logger.info(f"使用 TTS 引擎: '{tts_engine}', 语音: '{voice_name}'")
 
+    if tts_engine == "pyvideotrans":
+        from app.services.pyvideotrans_tts import synthesize
+        synthesize(
+            text, voice_file,
+            api_url=config.ui.get("pyvideotrans_api_url", "http://host.docker.internal:9011"),
+            tts_type=config.ui.get("pyvideotrans_tts_type", 1),
+            voice_role=voice_name.removeprefix("pyvideotrans:"),
+            language=config.ui.get("pyvideotrans_language", "zh-cn"),
+            speed=voice_rate,
+        )
+        sub_maker = new_sub_maker()
+        duration = get_audio_duration_from_file(voice_file)
+        if duration <= 0:
+            raise RuntimeError("pyvideotrans 返回的音频无法读取时长")
+        add_subtitle_event(sub_maker, 0, int(duration * 10000000), text)
+        return sub_maker
+
     if tts_engine == "tencent_tts":
         logger.info("分发到腾讯云 TTS")
         return tencent_tts(text, voice_name, voice_file, speed=voice_rate)
@@ -1807,6 +1824,7 @@ def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: f
     output_dir = utils.task_dir(task_id)
     tts_results = []
     audio_extension = ".wav" if tts_engine in (
+        "pyvideotrans",
         config.INDEXTTS_ENGINE,
         config.INDEXTTS_MACOS_ENGINE,
         config.INDEXTTS2_ENGINE,
@@ -1844,6 +1862,7 @@ def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: f
                     is_soulvoice_voice(voice_name)
                     or is_qwen_engine(tts_engine)
                     or tts_engine in (
+                        "pyvideotrans",
                         config.INDEXTTS_ENGINE,
                         config.INDEXTTS_MACOS_ENGINE,
                         config.INDEXTTS2_ENGINE,

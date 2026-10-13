@@ -12,6 +12,11 @@ from app.config import config
 from app.models.schema import VideoClipParams
 from app.services.subtitle_text import decode_subtitle_bytes, read_subtitle_text
 from app.utils import utils, check_script
+from webui.utils.video_sources import (
+    VIDEO_UPLOAD_TYPES,
+    list_video_source_files,
+    resolve_video_source_directory,
+)
 from webui.tools.generate_script_docu import generate_script_docu
 from webui.tools.generate_script_short import generate_script_short
 from webui.tools.generate_short_summary import (
@@ -26,15 +31,13 @@ from webui.tools.generate_short_summary import (
 
 
 SCRIPT_TABLE_BASE_COLUMNS = ["_id", "video_id", "video_name", "timestamp", "picture", "narration", "OST"]
-SCRIPT_TABLE_TEXT_COLUMNS = {"video_name", "timestamp", "picture", "narration", "value"}
+SCRIPT_TABLE_TEXT_COLUMNS = {"video_name", "timestamp", "picture", "narration", "value", "visual_overlays"}
 MODE_FILE = "file_selection"
 MODE_AUTO = "auto"
 MODE_SHORT = "short"
 MODE_SHORT_SUMMARY = "summary"
 MODE_FILM_SUMMARY = "film_summary"
 SUMMARY_SCRIPT_MODES = {MODE_SHORT_SUMMARY, MODE_FILM_SUMMARY}
-VIDEO_UPLOAD_TYPES = ["mp4", "mov", "avi", "flv", "mkv", "mpeg4"]
-VIDEO_GLOB_PATTERNS = [f"*.{suffix}" for suffix in VIDEO_UPLOAD_TYPES]
 SHORT_DRAMA_NARRATION_LANGUAGE_OPTIONS = [
     ("zh-CN", "简体中文（中国）"),
     ("en-US", "英语（美国）"),
@@ -546,12 +549,12 @@ def render_script_file(tr, params):
 def render_video_file(tr, params):
     """渲染视频文件选择"""
     source_options = {
+        tr("Select from video directory"): "resource",
         tr("Upload Local Files"): "upload",
-        tr("Select from resource directory"): "resource",
     }
     source_labels = list(source_options.keys())
     default_source_label = source_labels[0]
-    source_default_version = "upload_first_v2"
+    source_default_version = "directory_first_v3"
 
     if st.session_state.get('_video_source_default_version') != source_default_version:
         if (
@@ -565,9 +568,9 @@ def render_video_file(tr, params):
 
     current_source = st.session_state['video_source_selection']
     source_caption = (
-        tr("Select a video from resource videos directory")
+        tr("Select videos directly from the configured directory")
         if source_options[current_source] == "resource"
-        else tr("Upload new video files up to 2GB each")
+        else tr("Upload new video files up to 10GB each")
     )
     st.markdown(f"**{tr('Video Source')}**  :gray[{source_caption}]")
 
@@ -583,36 +586,40 @@ def render_video_file(tr, params):
         source = default_source_label
 
     if source_options[source] == "resource":
-        video_files = []
-        for suffix in VIDEO_GLOB_PATTERNS:
-            video_files.extend(glob.glob(os.path.join(utils.video_dir(), suffix)))
+        video_directory = resolve_video_source_directory(
+            utils.video_dir(), config.ui.get("video_source_directory", "")
+        )
+        st.caption(tr("Video directory: {path}").format(path=video_directory))
+        try:
+            video_files = list_video_source_files(video_directory)
+        except OSError as error:
+            _set_video_origin_state([], params)
+            st.error(tr("Cannot read video directory: {error}").format(error=str(error)))
+            return
 
-        video_files = sorted(video_files, key=os.path.getctime, reverse=True)
-        saved_video_path = st.session_state.get('video_origin_path', '')
-        selected_video_path = st.session_state.get('resource_video_selection')
-        if selected_video_path not in video_files:
-            st.session_state['resource_video_selection'] = (
-                saved_video_path if saved_video_path in video_files else None
-            )
+        directory_changed = st.session_state.get('_resource_video_directory') != video_directory
+        previous_selection = st.session_state.get('resource_video_selections', [])
+        if directory_changed:
+            previous_selection = _selected_video_paths()
+        st.session_state['resource_video_selections'] = [
+            path for path in previous_selection if path in video_files
+        ]
+        st.session_state['_resource_video_directory'] = video_directory
 
         def format_video_name(path):
-            return path.replace(config.root_dir, "")
+            return os.path.relpath(path, video_directory)
 
-        video_path = st.selectbox(
-            tr("Select Video"),
+        video_paths = st.multiselect(
+            tr("Select Videos"),
             options=video_files,
-            index=None,
-            placeholder=tr("Choose a video file"),
+            placeholder=tr("Choose one or more video files"),
             format_func=format_video_name,
-            key="resource_video_selection",
+            key="resource_video_selections",
         )
 
-        if video_path:
-            _set_video_origin_state([video_path], params)
-        else:
-            _set_video_origin_state([], params)
-            if not video_files:
-                st.info(tr("No video files found in resource videos directory"))
+        _set_video_origin_state(video_paths, params)
+        if not video_files:
+            st.info(tr("No video files found in the configured directory"))
         return
 
     if source_options[source] == "upload":
@@ -1118,6 +1125,7 @@ def render_video_script_editor(tr):
             row_height=72,
             column_order=column_order,
             column_config={
+                "visual_overlays": None,
                 "_id": st.column_config.NumberColumn(tr("Script Column ID"), step=1, format="%d", width=52),
                 "video_id": st.column_config.NumberColumn(
                     tr("Script Column Video ID"),
