@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
 
+from app.services.editing_timeline import seconds_to_milliseconds
 from app.models.schema import VideoClipParams
 from app.services import script_subtitle
 
@@ -112,7 +113,7 @@ def _write_json_file(file_path: str, data: Dict[str, Any]) -> None:
 
 
 def _floor_duration_to_milliseconds(duration: float) -> float:
-    return int(max(duration, 0.0) * 1000) / 1000.0
+    return seconds_to_milliseconds(max(duration, 0.0)) / 1000.0
 
 
 def _seconds_to_microseconds(seconds: float) -> int:
@@ -148,9 +149,10 @@ def _clamp_duration_to_media(
 ) -> float:
     requested_duration = _floor_duration_to_milliseconds(requested_duration)
     actual_duration = _get_cached_media_duration(media_file, duration_cache)
-    available_duration = _floor_duration_to_milliseconds(
-        max(actual_duration - max(source_start_time, 0.0), 0.0)
-    )
+    available_duration = max(
+        seconds_to_milliseconds(actual_duration)
+        - seconds_to_milliseconds(max(source_start_time, 0.0)), 0,
+    ) / 1000
     safe_duration = min(requested_duration, available_duration)
 
     logger.info(
@@ -1563,6 +1565,8 @@ def write_plaintext_jianying_draft(
             video_file = params.video_origin_path
 
         if not video_file or not os.path.exists(video_file):
+            if "timeline_start_ms" in item:
+                raise ValueError(f"时间线视频素材不存在: {video_file or timestamp}")
             logger.warning(f"视频素材不存在，跳过片段: {video_file or timestamp}")
             continue
 
@@ -1576,6 +1580,10 @@ def write_plaintext_jianying_draft(
         )
 
         audio_file = _resolve_item_audio_file(item, output_dir)
+        if "timeline_start_ms" in item and ost in [0, 2] and (
+            not audio_file or not os.path.exists(audio_file)
+        ):
+            raise ValueError(f"时间线配音素材不存在: {audio_file or timestamp}")
         audio_duration = None
         if ost in [0, 2] and audio_file and os.path.exists(audio_file):
             audio_duration = _get_cached_media_duration(audio_file, duration_cache)
@@ -1589,8 +1597,15 @@ def write_plaintext_jianying_draft(
         )
         segment_duration = _floor_duration_to_milliseconds(segment_duration)
         if segment_duration <= 0:
+            if "timeline_start_ms" in item:
+                raise ValueError(f"时间线片段没有可用素材时长: {timestamp}")
             logger.warning(f"片段时长无效，跳过: {timestamp}")
             continue
+
+        if "timeline_start_ms" in item:
+            if seconds_to_milliseconds(segment_duration) != seconds_to_milliseconds(requested_duration):
+                raise ValueError("素材时长与已规划时间线不一致，请重新生成时间线")
+            current_time_us = item["timeline_start_ms"] * 1000
 
         segment_duration_us = _seconds_to_microseconds(segment_duration)
         video_material_key = os.path.abspath(video_file)

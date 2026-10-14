@@ -9,6 +9,16 @@ import tempfile
 from typing import Dict, List, Optional, Tuple, Union
 from loguru import logger
 
+def probe_media_duration(media_file: str) -> float:
+    """Read available source/audio duration before planning an output timeline."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(media_file)],
+        check=True, capture_output=True, text=True,
+    )
+    return float(result.stdout.strip())
+
+
 # 全局变量，存储检测到的硬件加速信息
 _FFMPEG_HW_ACCEL_INFO = {
     "available": False,

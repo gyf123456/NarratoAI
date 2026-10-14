@@ -11,6 +11,7 @@
 import re
 import os
 from datetime import datetime, timedelta
+from app.services.editing_timeline import parse_time_milliseconds
 
 
 def parse_time(time_str):
@@ -49,14 +50,12 @@ def parse_edited_time_range(time_range_str):
     
     start_time_str, end_time_str = parts
     
-    # 将HH:MM:SS格式转换为timedelta
-    start_h, start_m, start_s = map(int, start_time_str.split(':'))
-    end_h, end_m, end_s = map(int, end_time_str.split(':'))
-    
-    start_time = timedelta(hours=start_h, minutes=start_m, seconds=start_s)
-    end_time = timedelta(hours=end_h, minutes=end_m, seconds=end_s)
-    
-    return start_time, end_time
+    try:
+        start = parse_time_milliseconds(start_time_str)
+        end = parse_time_milliseconds(end_time_str)
+        return timedelta(milliseconds=start), timedelta(milliseconds=end)
+    except (ValueError, ArithmeticError):
+        return None, None
 
 
 def merge_subtitle_files(subtitle_items, output_file=None):

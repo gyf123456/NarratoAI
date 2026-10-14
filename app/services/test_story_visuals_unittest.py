@@ -32,6 +32,15 @@ class StoryVisualsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             plan_visual_overlays([{"duration": 4, "visual_overlays": [self.overlay, self.overlay]}], self.root)
 
+    def test_graphics_use_shared_timeline_offset(self):
+        plan = plan_visual_overlays([
+            {"duration": 1.001, "OST": 0},
+            {"duration": 1, "OST": 0, "timeline_start_ms": 1001,
+             "visual_overlays": [self.overlay]},
+        ], self.root)
+        self.assertAlmostEqual(1.201, plan[0]["start"])
+        self.assertAlmostEqual(1.801, plan[0]["end"])
+
     def test_original_dialogue_cannot_be_covered(self):
         with self.assertRaises(ValueError):
             plan_visual_overlays([{"duration": 4, "OST": 1, "visual_overlays": [self.overlay]}], self.root)

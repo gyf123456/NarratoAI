@@ -203,6 +203,11 @@ def _build_combined_original_subtitle_content(
 
 
 def _resolve_item_time_range(item: dict, current_time: float) -> Tuple[Optional[Tuple[float, float]], float]:
+    if "timeline_start_ms" in item and "timeline_end_ms" in item:
+        start = item["timeline_start_ms"] / 1000
+        end = item["timeline_end_ms"] / 1000
+        return (start, end), end
+
     duration = float(item.get("duration", 0.0) or 0.0)
     if duration > 0:
         start = current_time

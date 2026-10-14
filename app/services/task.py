@@ -23,7 +23,8 @@ from app.services import (
     story_visuals,
 )
 from app.services import state as sm
-from app.utils import utils
+from app.utils import utils, ffmpeg_utils
+from app.services.editing_timeline import build_editing_timeline, attach_rendered_clips
 
 
 VIDEO_GENERATION_TOTAL_STEPS = 6
@@ -742,20 +743,19 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         step_current=3,
     )
 
-    # 使用新的统一裁剪策略
+    timeline = build_editing_timeline(
+        list_script, tts_results, params.video_origin_path,
+        getattr(params, "video_origin_paths", []),
+        media_duration=ffmpeg_utils.probe_media_duration,
+    )
     video_clip_result = clip_video.clip_video_unified(
         video_origin_path=params.video_origin_path,
         video_origin_paths=getattr(params, "video_origin_paths", []),
         script_list=list_script,
-        tts_results=tts_results
+        tts_results=tts_results,
+        timeline=timeline,
     )
-
-    # 更新 list_script 中的时间戳和路径信息
-    tts_clip_result = {tts_result['_id']: tts_result['audio_file'] for tts_result in tts_results}
-    subclip_clip_result = {
-        tts_result['_id']: tts_result['subtitle_file'] for tts_result in tts_results
-    }
-    new_script_list = update_script.update_script_timestamps(list_script, video_clip_result, tts_clip_result, subclip_clip_result)
+    new_script_list = attach_rendered_clips(timeline, video_clip_result)
 
     logger.info(f"统一裁剪完成，处理了 {len(video_clip_result)} 个视频片段")
 
@@ -776,7 +776,7 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         message="正在合并配音和字幕",
         step_current=4,
     )
-    total_duration = sum([script["duration"] for script in new_script_list])
+    total_duration = new_script_list[-1]["timeline_end_ms"] / 1000
     if tts_segments:
         try:
             # 合并音频文件

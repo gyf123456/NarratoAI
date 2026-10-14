@@ -10,6 +10,9 @@
 
 import re
 import os
+from app.services.editing_timeline import (
+    parse_time_milliseconds, format_time_milliseconds, seconds_to_milliseconds,
+)
 from typing import Dict, List, Any, Tuple, Union
 
 
@@ -57,32 +60,8 @@ def calculate_duration(timestamp: str) -> float:
     """
     try:
         start_time, end_time = timestamp.split('-')
+        return (parse_time_milliseconds(end_time) - parse_time_milliseconds(start_time)) / 1000
 
-        # 处理毫秒部分
-        if ',' in start_time:
-            start_parts = start_time.split(',')
-            start_time_parts = start_parts[0].split(':')
-            start_ms = float('0.' + start_parts[1]) if len(start_parts) > 1 else 0
-            start_h, start_m, start_s = map(int, start_time_parts)
-        else:
-            start_h, start_m, start_s = map(int, start_time.split(':'))
-            start_ms = 0
-
-        if ',' in end_time:
-            end_parts = end_time.split(',')
-            end_time_parts = end_parts[0].split(':')
-            end_ms = float('0.' + end_parts[1]) if len(end_parts) > 1 else 0
-            end_h, end_m, end_s = map(int, end_time_parts)
-        else:
-            end_h, end_m, end_s = map(int, end_time.split(':'))
-            end_ms = 0
-
-        # 转换为秒
-        start_seconds = start_h * 3600 + start_m * 60 + start_s + start_ms
-        end_seconds = end_h * 3600 + end_m * 60 + end_s + end_ms
-
-        # 计算时间差（秒）
-        return round(end_seconds - start_seconds, 2)
     except (ValueError, AttributeError):
         return 0.0
 
@@ -122,7 +101,7 @@ def update_script_timestamps(
             }
 
     # 计算累积时长，用于生成成品视频中的时间范围
-    accumulated_duration = 0.0
+    accumulated_milliseconds = 0
     
     # 更新脚本中的时间戳
     for item in script_list:
@@ -175,22 +154,12 @@ def update_script_timestamps(
             
         # 计算片段在成品视频中的时间范围
         if calculate_edited_timerange and current_duration > 0:
-            start_time_seconds = accumulated_duration
-            end_time_seconds = accumulated_duration + current_duration
-            
-            # 将秒数转换为 HH:MM:SS 格式
-            start_h = int(start_time_seconds // 3600)
-            start_m = int((start_time_seconds % 3600) // 60)
-            start_s = int(start_time_seconds % 60)
-            
-            end_h = int(end_time_seconds // 3600)
-            end_m = int((end_time_seconds % 3600) // 60)
-            end_s = int(end_time_seconds % 60)
-            
-            item_copy['editedTimeRange'] = f"{start_h:02d}:{start_m:02d}:{start_s:02d}-{end_h:02d}:{end_m:02d}:{end_s:02d}"
-            
-            # 更新累积时长
-            accumulated_duration = end_time_seconds
+            duration_ms = seconds_to_milliseconds(current_duration)
+            item_copy['editedTimeRange'] = (
+                f"{format_time_milliseconds(accumulated_milliseconds)}-"
+                f"{format_time_milliseconds(accumulated_milliseconds + duration_ms)}"
+            )
+            accumulated_milliseconds += duration_ms
 
         updated_script.append(item_copy)
 

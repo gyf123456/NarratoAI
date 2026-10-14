@@ -46,14 +46,15 @@ def merge_audio_files(task_id: str, total_duration: float, list_script: list):
         try:
             # 获取片段时长（秒）
             duration = segment['duration']
+            position_ms = segment.get('timeline_start_ms', round(current_position * 1000))
             
             # 检查audio字段是否为空
             if segment['audio'] and os.path.exists(segment['audio']):
                 # 加载TTS音频文件
-                tts_audio = AudioSegment.from_file(segment['audio'])
+                tts_audio = AudioSegment.from_file(segment['audio'])[:round(duration * 1000)]
                 
                 # 将TTS音频添加到最终音频
-                final_audio = final_audio.overlay(tts_audio, position=current_position * 1000)
+                final_audio = final_audio.overlay(tts_audio, position=position_ms)
             else:
                 # audio为空，不添加音频，仅保留间隔
                 logger.info(f"片段 {segment.get('timestamp', '')} 没有音频文件，保留 {duration} 秒的间隔")

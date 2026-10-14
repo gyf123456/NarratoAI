@@ -17,6 +17,9 @@ from typing import Dict, List, Optional
 from pathlib import Path
 
 from app.utils import ffmpeg_utils
+from app.services.editing_timeline import (
+    build_editing_timeline, normalize_video_paths, resolve_video_path,
+)
 
 def parse_timestamp(timestamp: str) -> tuple:
     """
@@ -62,71 +65,11 @@ def _normalize_video_origin_paths(
     video_origin_path: str,
     video_origin_paths: Optional[List[str]] = None,
 ) -> List[str]:
-    paths = []
-    if video_origin_paths:
-        paths.extend(video_origin_paths)
-    if video_origin_path:
-        paths.insert(0, video_origin_path)
-
-    normalized_paths = []
-    seen = set()
-    for item in paths:
-        if not isinstance(item, str):
-            continue
-        item = item.strip()
-        if not item or item in seen:
-            continue
-        normalized_paths.append(item)
-        seen.add(item)
-    return normalized_paths
-
-
-def _coerce_video_id(value) -> Optional[int]:
-    try:
-        video_id = int(value)
-    except (TypeError, ValueError):
-        return None
-    return video_id if video_id > 0 else None
-
-
-def _match_video_id_by_name(video_name: str, video_origin_paths: List[str]) -> Optional[int]:
-    video_name = str(video_name or "").strip()
-    if not video_name:
-        return None
-
-    expected_name = os.path.basename(video_name)
-    for index, video_path in enumerate(video_origin_paths, start=1):
-        if os.path.basename(video_path) == expected_name:
-            return index
-    return None
+    return normalize_video_paths(video_origin_path, video_origin_paths)
 
 
 def _resolve_script_video_path(script_item: Dict, video_origin_paths: List[str]) -> str:
-    explicit_path = (
-        script_item.get("source_video_path")
-        or script_item.get("video_origin_path")
-        or script_item.get("origin_video_path")
-    )
-    if explicit_path and os.path.exists(explicit_path):
-        return explicit_path
-
-    video_id = _coerce_video_id(script_item.get("video_id") or script_item.get("video_index"))
-    matched_video_id = _match_video_id_by_name(
-        script_item.get("video_name") or script_item.get("source_video"),
-        video_origin_paths,
-    )
-    if matched_video_id:
-        video_id = matched_video_id
-
-    if video_id is not None:
-        if video_id <= len(video_origin_paths):
-            return video_origin_paths[video_id - 1]
-        logger.warning(
-            f"片段 {script_item.get('_id')} 的 video_id={video_id} 超出视频数量 "
-            f"{len(video_origin_paths)}，默认使用第一个视频"
-        )
-
-    return video_origin_paths[0]
+    return resolve_video_path(script_item, video_origin_paths)
 
 
 def _safe_output_id(value) -> str:
@@ -670,10 +613,8 @@ def _process_narration_only_segment(
         logger.error(f"未找到片段 {_id} 的TTS结果")
         return None
 
-    # 解析起始时间，使用TTS音频时长计算结束时间
-    start_time, _ = parse_timestamp(timestamp)
-    duration = tts_item["duration"]
-    calculated_end_time = calculate_end_time(start_time, duration, extra_seconds=0)
+    # The shared timeline has already resolved the TTS duration and source range.
+    start_time, calculated_end_time = parse_timestamp(script_item["sourceTimeRange"])
 
     # 转换为FFmpeg兼容的时间格式
     ffmpeg_start_time = start_time.replace(',', '.')
@@ -716,7 +657,7 @@ def _process_original_audio_segment(
     timestamp = script_item["timestamp"]
 
     # 严格按照timestamp进行裁剪
-    start_time, end_time = parse_timestamp(timestamp)
+    start_time, end_time = parse_timestamp(script_item.get("sourceTimeRange", timestamp))
 
     # 转换为FFmpeg兼容的时间格式
     ffmpeg_start_time = start_time.replace(',', '.')
@@ -765,10 +706,8 @@ def _process_mixed_segment(
         logger.error(f"未找到片段 {_id} 的TTS结果")
         return None
 
-    # 解析起始时间，使用TTS音频时长计算结束时间
-    start_time, _ = parse_timestamp(timestamp)
-    duration = tts_item["duration"]
-    calculated_end_time = calculate_end_time(start_time, duration, extra_seconds=0)
+    # The shared timeline has already resolved the TTS duration and source range.
+    start_time, calculated_end_time = parse_timestamp(script_item["sourceTimeRange"])
 
     # 转换为FFmpeg兼容的时间格式
     ffmpeg_start_time = start_time.replace(',', '.')
@@ -883,7 +822,8 @@ def clip_video_unified(
         tts_results: List[Dict],
         output_dir: Optional[str] = None,
         task_id: Optional[str] = None,
-        video_origin_paths: Optional[List[str]] = None
+        video_origin_paths: Optional[List[str]] = None,
+        timeline: Optional[List[Dict]] = None
 ) -> Dict[str, str]:
     """
     基于OST类型的统一视频裁剪策略 - 消除双重裁剪问题
@@ -895,6 +835,7 @@ def clip_video_unified(
         output_dir: 输出目录路径，默认为None时会自动生成
         task_id: 任务ID，用于生成唯一的输出目录，默认为None时会自动生成
         video_origin_paths: 多个原始视频路径，脚本片段可用 video_id/video_name 指定来源
+        timeline: 已规划的共享时间线；省略时先读取素材时长并规划
 
     Returns:
         Dict[str, str]: 片段ID到裁剪后视频路径的映射
@@ -906,6 +847,13 @@ def clip_video_unified(
     missing_video_paths = [item for item in video_source_paths if not os.path.exists(item)]
     if missing_video_paths:
         raise FileNotFoundError(f"视频文件不存在: {', '.join(missing_video_paths)}")
+
+    if timeline is None:
+        timeline = build_editing_timeline(
+            script_list, tts_results, video_origin_path, video_origin_paths,
+            media_duration=ffmpeg_utils.probe_media_duration,
+        )
+    script_list = timeline
 
     # 如果未提供task_id，则根据输入生成一个唯一ID
     if task_id is None:
@@ -923,7 +871,7 @@ def clip_video_unified(
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # 创建TTS结果的快速查找映射
-    tts_map = {item['_id']: item for item in tts_results}
+    tts_map = {item['_id']: item for item in timeline}
 
     # 获取硬件加速支持
     hwaccel_type = check_hardware_acceleration()
@@ -996,11 +944,7 @@ def clip_video_unified(
 
     # 检查是否有失败的片段
     if failed_clips:
-        logger.warning(f"⚠️  以下片段处理失败: {failed_clips}")
-        if len(failed_clips) == total_clips:
-            raise RuntimeError("所有视频片段处理都失败了，请检查视频文件和ffmpeg配置")
-        elif len(failed_clips) > total_clips / 2:
-            logger.warning(f"⚠️  超过一半的片段处理失败 ({len(failed_clips)}/{total_clips})，请检查硬件加速配置")
+        raise RuntimeError(f"时间线片段裁剪失败，停止合成以避免音画错位: {failed_clips}")
 
     if success_count > 0:
         logger.info(f"🎉 统一视频裁剪任务完成! 输出目录: {output_dir}")

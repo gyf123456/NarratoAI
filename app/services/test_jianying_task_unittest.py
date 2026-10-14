@@ -106,6 +106,13 @@ class JianyingTaskTests(unittest.TestCase):
 
         self.assertAlmostEqual(1.5, duration)
 
+    def test_clamp_duration_preserves_exact_millisecond_difference(self):
+        with patch.object(jianying_task, "get_media_duration_ffprobe", return_value=3.004):
+            duration = jianying_task._clamp_duration_to_media(
+                1.003, "source.mp4", {}, "视频素材", source_start_time=2.001,
+            )
+        self.assertEqual(1.003, duration)
+
     def test_format_seconds_for_trange_uses_millisecond_precision(self):
         self.assertEqual("4.280s", jianying_task._format_seconds_for_trange(4.28))
 
@@ -305,6 +312,30 @@ class JianyingTaskTests(unittest.TestCase):
             self.assertEqual(1.25, draft_script[0]["duration"])
             self.assertTrue(draft_script[0]["use_source_timerange"])
 
+    def test_draft_and_rendered_output_share_the_same_timeline(self):
+        from app.services.editing_timeline import build_editing_timeline, attach_rendered_clips
+
+        params = VideoClipParams(video_origin_path="one.mp4", video_origin_paths=["one.mp4", "two.mp4"])
+        script = [
+            {"_id": 1, "OST": 0, "timestamp": "00:00:01-00:00:03", "narration": "解说"},
+            {"_id": 2, "OST": 1, "timestamp": "00:00:02.001-00:00:03.234", "video_id": 2},
+            {"_id": 3, "OST": 2, "timestamp": "00:00:01-00:00:03", "narration": "混合"},
+        ]
+        tts = [
+            {"_id": 1, "audio_file": "a.wav", "duration": 1.001},
+            {"_id": 3, "audio_file": "b.wav", "duration": 2.003},
+        ]
+        plan = build_editing_timeline(script, tts, params.video_origin_path, params.video_origin_paths)
+        rendered = attach_rendered_clips(plan, {1: "a.mp4", 2: "b.mp4", 3: "c.mp4"})
+        draft = jianying_task._build_jianying_draft_script(script, params, tts)
+        for render_item, draft_item in zip(rendered, draft):
+            for field in ("duration", "sourceTimeRange", "editedTimeRange",
+                          "timeline_start_ms", "timeline_end_ms", "audio"):
+                self.assertEqual(render_item[field], draft_item[field])
+            self.assertFalse(render_item["use_source_timerange"])
+            self.assertTrue(draft_item["use_source_timerange"])
+        self.assertEqual("two.mp4", draft[1]["video"])
+
     def test_get_original_subtitle_paths_falls_back_to_matching_video_name(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -408,6 +439,7 @@ class JianyingTaskTests(unittest.TestCase):
                 patch.dict(jianying_task.config.ui, {"jianying_draft_path": str(root_path)}, clear=False),
                 patch.object(jianying_task.utils, "task_dir", return_value=str(task_dir)),
                 patch.object(jianying_task.voice, "tts_multiple", return_value=tts_results),
+                patch.object(jianying_task, "get_media_duration_ffprobe", return_value=10),
                 patch.object(jianying_task, "_create_jianying_subtitle_file", return_value=str(subtitle_path)),
                 patch.object(jianying_task, "write_plaintext_jianying_draft", return_value=(str(root_path / "draft"), "NarratoAI_no_clip")) as write_draft,
                 patch.object(jianying_task.clip_video, "clip_video_unified") as clip_video_unified,

@@ -12,6 +12,8 @@ def plan_visual_overlays(script, project_root):
     timeline = 0.0
     result = []
     for segment in script:
+        if "timeline_start_ms" in segment:
+            timeline = segment["timeline_start_ms"] / 1000
         duration = float(segment.get("duration", 0))
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("图解时间线缺少有效片段时长")

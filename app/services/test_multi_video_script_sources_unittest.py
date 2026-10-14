@@ -2,13 +2,77 @@ import json
 import os
 import tempfile
 import unittest
+import shutil
+import subprocess
+from pathlib import Path
 from unittest import mock
 
 from app.services import clip_video
+from app.services.editing_timeline import build_editing_timeline, attach_rendered_clips
 from app.utils import check_script
 
 
 class TestMultiVideoScriptSources(unittest.TestCase):
+    def test_failed_clip_stops_composition_instead_of_shifting_timeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.mp4"
+            source.write_bytes(b"video")
+            script = [
+                {"_id": 1, "OST": 1, "timestamp": "00:00:00-00:00:01"},
+                {"_id": 2, "OST": 1, "timestamp": "00:00:01-00:00:02"},
+            ]
+            def process(_source, item, output_dir, *_args):
+                if item["_id"] == 2:
+                    return None
+                output = Path(output_dir) / "one.mp4"
+                output.write_bytes(b"clip")
+                return str(output)
+            with (
+                mock.patch.object(clip_video, "check_hardware_acceleration", return_value=None),
+                mock.patch.object(clip_video.ffmpeg_utils, "probe_media_duration", return_value=5),
+                mock.patch.object(clip_video, "_process_original_audio_segment", side_effect=process),
+                self.assertRaisesRegex(RuntimeError, "停止合成"),
+            ):
+                clip_video.clip_video_unified(str(source), script, [], output_dir=directory)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
+    def test_ffmpeg_consumes_shared_ranges_for_all_ost_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = str(Path(directory) / "source.mp4")
+            audio = str(Path(directory) / "speech.wav")
+            subprocess.run([
+                "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=100",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+                "-t", "4", "-c:v", "libx264", "-c:a", "aac", "-y", source,
+            ], check=True, capture_output=True)
+            subprocess.run([
+                "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880",
+                "-t", "1.23", "-y", audio,
+            ], check=True, capture_output=True)
+            script = [
+                {"_id": 1, "OST": 0, "timestamp": "00:00:00-00:00:03"},
+                {"_id": 2, "OST": 1, "timestamp": "00:00:01.230-00:00:02.460"},
+                {"_id": 3, "OST": 2, "timestamp": "00:00:02.000-00:00:04"},
+            ]
+            tts = [{"_id": i, "duration": 1.23, "audio_file": audio} for i in (1, 3)]
+            plan = build_editing_timeline(script, tts, source,
+                                         media_duration=clip_video.ffmpeg_utils.probe_media_duration)
+            with mock.patch.object(clip_video, "check_hardware_acceleration", return_value=None):
+                clips = clip_video.clip_video_unified(
+                    source, script, tts, output_dir=str(Path(directory) / "clips"), timeline=plan,
+                )
+            output = attach_rendered_clips(plan, clips)
+            self.assertEqual(3690, output[-1]["timeline_end_ms"])
+            for item in output:
+                actual = clip_video.ffmpeg_utils.probe_media_duration(item["video"])
+                # Encoded media is quantized to frame/sample boundaries.
+                self.assertLess(abs(actual - item["duration"]), 0.05)
+                probe = subprocess.run([
+                    "ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+                    "-of", "csv=p=0", item["video"],
+                ], check=True, capture_output=True, text=True)
+                self.assertEqual(item["OST"] != 0, "audio" in probe.stdout)
+
     def test_clip_command_uses_input_fast_seek(self):
         encoder_config = clip_video.get_safe_encoder_config(None)
 
@@ -82,6 +146,7 @@ class TestMultiVideoScriptSources(unittest.TestCase):
 
             with (
                 mock.patch.object(clip_video, "check_hardware_acceleration", return_value=None),
+                mock.patch.object(clip_video.ffmpeg_utils, "probe_media_duration", return_value=10),
                 mock.patch.object(clip_video, "_process_original_audio_segment", side_effect=fake_process),
             ):
                 result = clip_video.clip_video_unified(
